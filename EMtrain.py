@@ -18,7 +18,7 @@ import model_14
 
 # Training settings
 parser = argparse.ArgumentParser(description='PyTorch Matrix-Capsules-EM')
-parser.add_argument('--dataset', default ='dataset/deepfaketimit', help='path to root dataset')
+parser.add_argument('--dataset', default ='dataset\\deepfaketimit', help='path to root dataset')
 parser.add_argument('--train_set', default ='train', help='train set')
 parser.add_argument('--val_set', default ='validation', help='validation set')
 parser.add_argument('--workers', type=int, help='number of data loading workers', default=0)
@@ -32,7 +32,7 @@ parser.add_argument('--beta1', type=float, default=0.9, help='beta1 for adam')
 # no use
 parser.add_argument('--gpu_id', type=int, default=0, help='GPU ID')
 parser.add_argument('--resume', type=int, default=0, help="choose a epochs to resume from (0 to train from scratch)")
-parser.add_argument('--outf', default='checkpoints\deepfaketimit', help='folder to output model checkpoints')
+parser.add_argument('--outf', default='checkpoints\\deepfaketimit', help='folder to output model checkpoints')
 
 # no use
 parser.add_argument('--disable_random', action='store_true', default=False, help='disable randomness for routing matrix')
