@@ -18,7 +18,7 @@ import model_14
 
 # Training settings
 parser = argparse.ArgumentParser(description='PyTorch Matrix-Capsules-EM')
-parser.add_argument('--dataset', default ='dataset\\deepfaketimit', help='path to root dataset')
+parser.add_argument('--dataset', default ='dataset/deepfaketimit', help='path to root dataset')
 parser.add_argument('--train_set', default ='train', help='train set')
 parser.add_argument('--val_set', default ='validation', help='validation set')
 parser.add_argument('--workers', type=int, help='number of data loading workers', default=0)
@@ -32,7 +32,7 @@ parser.add_argument('--beta1', type=float, default=0.9, help='beta1 for adam')
 # no use
 parser.add_argument('--gpu_id', type=int, default=0, help='GPU ID')
 parser.add_argument('--resume', type=int, default=0, help="choose a epochs to resume from (0 to train from scratch)")
-parser.add_argument('--outf', default='checkpoints\\deepfaketimit', help='folder to output model checkpoints')
+parser.add_argument('--outf', default='checkpoints', help='folder to output model checkpoints')
 
 # no use
 parser.add_argument('--disable_random', action='store_true', default=False, help='disable randomness for routing matrix')
@@ -171,7 +171,7 @@ def train(train_loader, model, criterion, optimizer, epoch, device):
                        100. * batch_idx / len(train_loader),
                 loss.item(), acc[0].item(),
                 batch_time=batch_time, data_time=data_time))
-    return epoch_acc
+    return epoch_acc, loss.item()
 
 
 def snapshot(model, folder, epoch):
@@ -201,7 +201,7 @@ def test(test_loader, model, criterion, device):
     acc /= test_len
     print('\nTest set: Average loss: {:.6f}, Accuracy: {:.6f} \n'.format(
         test_loss, acc))
-    return acc
+    return acc, test_loss
 
 
 def main():
@@ -214,6 +214,8 @@ def main():
         torch.cuda.manual_seed(args.manualSeed)
 
     device = torch.device("cuda" if args.cuda else "cpu")
+
+    text_writer = open(os.path.join(args.outf, 'train.csv'), 'w')
 
     # datasets
     num_class, train_loader, test_loader = get_setting(args)
@@ -228,16 +230,17 @@ def main():
 
     best_acc = test(test_loader, model, criterion, device)
     for epoch in range(1, args.niter + 1):
-        acc = train(train_loader, model, criterion, optimizer, epoch, device)
+        acc, loss_train = train(train_loader, model, criterion, optimizer, epoch, device)
         acc /= len(train_loader)
-        if epoch % args.test_intvl == 0:
-            best_acc = max(best_acc, test(test_loader, model, criterion, device))
-        print("epoch: "+str(epoch))
-        print("best acc: "+str(best_acc))
-    best_acc = max(best_acc, test(test_loader, model, criterion, device))
-    print('best test accuracy: {:.6f}'.format(best_acc))
+
+        acc_test, loss_test = test(test_loader, model, criterion, device)
+        text_writer.write('%d,%.4f,%.2f,%.4f,%.2f\n'
+                          % (epoch, loss_train, acc , loss_test, acc_test ))
+
+        text_writer.flush()
 
     snapshot(model, args.snapshot_folder, args.niter)
+    text_writer.close()
 
 
 if __name__ == '__main__':
