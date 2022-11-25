@@ -49,7 +49,7 @@ parser.add_argument('--test-intvl', type=int, default=1, metavar='N',
                     help='test intvl (default: 1)')
 parser.add_argument('--log-interval', type=int, default=10, metavar='N',
                     help='how many batches to wait before logging training status')
-parser.add_argument('--em-iters', type=int, default=2, metavar='N',
+parser.add_argument('--em-iters', type=int, default=5, metavar='N',
                     help='iterations of EM Routing')
 parser.add_argument('--snapshot-folder', type=str, default='./snapshots_emcaps', metavar='SF',
                     help='where to store the snapshots')
@@ -221,8 +221,8 @@ def main():
     num_class, train_loader, test_loader = get_setting(args)
 
     # model
-    A, B, C, D = 64, 8, 16, 16
-    # A, B, C, D = 32, 32, 32, 32
+    # A, B, C, D = 64, 8, 16, 16
+    A, B, C, D = 16, 64, 16, 8
     model = EMCapsules(A=A, B=B, C=C, D=D, E=num_class, iters=args.em_iters).to(device)
 
     criterion = SpreadLoss(num_class=num_class, m_min=0.2, m_max=0.9)
