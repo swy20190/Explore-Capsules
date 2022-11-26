@@ -213,3 +213,28 @@ class CapsuleLoss(nn.Module):
             loss_t = loss_t + self.cross_entropy_loss(classes[:,i+1,:], labels)
 
         return loss_t
+
+
+class ResNetExtractor(nn.Module):
+    def __init__(self, train=False):
+        super(ResNetExtractor, self).__init__()
+
+        self.res_1 = self.ResNet(models.resnet34(pretrained=True), 0, 28)
+        if train:
+            self.res_1.train(mode=True)
+            self.freeze_gradient()
+        else:
+            self.res_1.eval()
+
+    def ResNet(self, res, begin, end):
+        features = nn.Sequential(*list(res.children())[:-3])
+        return features
+
+    def freeze_gradient(self, begin=0, end=5):
+        for i in range(begin, end+1):
+            self.res_1[i].requires_grad = False
+
+    def forward(self, input):
+        return self.res_1(input)
+
+
