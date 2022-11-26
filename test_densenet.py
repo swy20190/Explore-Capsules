@@ -1,4 +1,4 @@
-#from_model_14
+#from_model_14 DenseNet
 import sys
 sys.setrecursionlimit(15000)
 import os
@@ -15,7 +15,7 @@ from sklearn import metrics
 from scipy.optimize import brentq
 from scipy.interpolate import interp1d
 from sklearn.metrics import roc_curve
-import model_14
+import model_14_densenet
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', default ='dataset/deepfaketimit', help='path to dataset')
@@ -46,14 +46,16 @@ if __name__ == '__main__':
     assert dataset_test
     dataloader_test = torch.utils.data.DataLoader(dataset_test, batch_size=opt.batchSize, shuffle=False, num_workers=int(opt.workers))
 
-    vgg_ext = model_14.VggExtractor()
-    capnet = model_14.CapsuleNet(2, opt.gpu_id)
+    densenet_ext = model_14_densenet.DenseNet161()
+    adjust_layer = model_14_densenet.FeatureExtractorDense()
+    capnet = model_14_densenet.CapsuleNet(2, opt.gpu_id)
 
     capnet.load_state_dict(torch.load(os.path.join(opt.outf,'capsule_' + str(opt.id) + '.pt')))
     capnet.eval()
 
     if opt.gpu_id >= 0:
-        vgg_ext.cuda(opt.gpu_id)
+        adjust_layer.cuda(opt.gpu_id)
+        densenet_ext.cuda(opt.gpu_id)
         capnet.cuda(opt.gpu_id)
 
 
@@ -75,7 +77,8 @@ if __name__ == '__main__':
 
         input_v = Variable(img_data)
 
-        x = vgg_ext(input_v)
+        x = densenet_ext(input_v)
+        x = adjust_layer(x)
         classes, class_ = capnet(x, random=opt.random)
 
         output_dis = class_.data.cpu()
