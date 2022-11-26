@@ -237,4 +237,3 @@ class ResNetExtractor(nn.Module):
     def forward(self, input):
         return self.res_1(input)
 
-
