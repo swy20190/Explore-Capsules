@@ -382,3 +382,4 @@ class SpreadLoss(_Loss):
 if __name__ == '__main__':
     model = EMCapsules(E=10)
     print(model)
+    
