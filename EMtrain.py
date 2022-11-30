@@ -82,7 +82,7 @@ def get_setting(args):
 
 
 def accuracy(output, target, topk=(1,)):
-    """Computes the precision@k for the specified values of k"""
+    """Computes the accuracy for top k"""
     maxk = max(topk)
     batch_size = target.size(0)
 

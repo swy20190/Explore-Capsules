@@ -20,9 +20,6 @@ class FeatureExtractor(nn.Module):
 class PrimaryCaps(nn.Module):
     r"""Creates a primary convolutional capsule layer
     that outputs a pose matrix and an activation.
-    Note that for computation convenience, pose matrix
-    are stored in first part while the activations are
-    stored in the second part.
     Args:
         A: output of the normal conv layer
         B: number of types of capsules
@@ -39,15 +36,19 @@ class PrimaryCaps(nn.Module):
         super(PrimaryCaps, self).__init__()
         self.pose = nn.Conv2d(in_channels=A, out_channels=B*P*P,
                             kernel_size=K, stride=stride, bias=True)
-        self.a = nn.Conv2d(in_channels=A, out_channels=B,
+        self.action = nn.Conv2d(in_channels=A, out_channels=B,
                             kernel_size=K, stride=stride, bias=True)
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
-        p = self.pose(x)
-        a = self.a(x)
-        a = self.sigmoid(a)
-        out = torch.cat([p, a], dim=1)
+        pose = self.pose(x)
+        action = self.action(x)
+        action = self.sigmoid(action)
+        # pose matrix
+        # are stored in first part while the
+        # activations are
+        # stored in the second part
+        out = torch.cat([pose, action], dim=1)
         out = out.permute(0, 2, 3, 1)
         return out
 
@@ -89,39 +90,28 @@ class ConvCaps(nn.Module):
         self.eps = 1e-8
         self._lambda = 1e-03
         self.ln_2pi = torch.cuda.FloatTensor(1).fill_(math.log(2*math.pi))
-        # params
-        # Note that \beta_u and \beta_a are per capsule type,
-        # which are stated at https://openreview.net/forum?id=HJWLfGWRb&noteId=rJUY2VdbM
         self.beta_u = nn.Parameter(torch.zeros(C))
         self.beta_a = nn.Parameter(torch.zeros(C))
-        # Note that the total number of trainable parameters between
-        # two convolutional capsule layer types is 4*4*k*k
-        # and for the whole layer is 4*4*k*k*B*C,
-        # which are stated at https://openreview.net/forum?id=HJWLfGWRb&noteId=r17t2UIgf
         self.weights = nn.Parameter(torch.randn(1, K*K*B, C, P, P))
         # op
         self.sigmoid = nn.Sigmoid()
         self.softmax = nn.Softmax(dim=2)
 
-    def m_step(self, a_in, r, v, eps, b, B, C, psize):
+    def m_step(self, action_in, r, v, eps, b, B, C, psize):
         """
-            \mu^h_j = \dfrac{\sum_i r_{ij} V^h_{ij}}{\sum_i r_{ij}}
-            (\sigma^h_j)^2 = \dfrac{\sum_i r_{ij} (V^h_{ij} - mu^h_j)^2}{\sum_i r_{ij}}
-            cost_h = (\beta_u + log \sigma^h_j) * \sum_i r_{ij}
-            a_j = logistic(\lambda * (\beta_a - \sum_h cost_h))
             Input:
-                a_in:      (b, C, 1)
-                r:         (b, B, C, 1)
-                v:         (b, B, C, P*P)
+                action_in:      (b, C, 1)
+                r:              (b, B, C, 1)
+                v:              (b, B, C, P*P)
             Local:
                 cost_h:    (b, C, P*P)
                 r_sum:     (b, C, 1)
             Output:
-                a_out:     (b, C, 1)
-                mu:        (b, 1, C, P*P)
-                sigma_sq:  (b, 1, C, P*P)
+                action_out:     (b, C, 1)
+                mu:             (b, 1, C, P*P)
+                sigma_sq:       (b, 1, C, P*P)
         """
-        r = r * a_in
+        r = r * action_in
         r = r / (r.sum(dim=2, keepdim=True) + eps)
         r_sum = r.sum(dim=1, keepdim=True)
         coeff = r / (r_sum + eps)
@@ -134,22 +124,18 @@ class ConvCaps(nn.Module):
         sigma_sq = sigma_sq.view(b, C, psize)
         cost_h = (self.beta_u.view(C, 1) + torch.log(sigma_sq.sqrt())) * r_sum
 
-        a_out = self.sigmoid(self._lambda*(self.beta_a - cost_h.sum(dim=2)))
+        action_out = self.sigmoid(self._lambda*(self.beta_a - cost_h.sum(dim=2)))
         sigma_sq = sigma_sq.view(b, 1, C, psize)
 
-        return a_out, mu, sigma_sq
+        return action_out, mu, sigma_sq
 
-    def e_step(self, mu, sigma_sq, a_out, v, eps, b, C):
+    def e_step(self, mu, sigma_sq, action_out, v, b, C):
         """
-            ln_p_j = sum_h \dfrac{(\V^h_{ij} - \mu^h_j)^2}{2 \sigma^h_j}
-                    - sum_h ln(\sigma^h_j) - 0.5*\sum_h ln(2*\pi)
-            r = softmax(ln(a_j*p_j))
-              = softmax(ln(a_j) + ln(p_j))
             Input:
-                mu:        (b, 1, C, P*P)
-                sigma:     (b, 1, C, P*P)
-                a_out:     (b, C, 1)
-                v:         (b, B, C, P*P)
+                mu:             (b, 1, C, P*P)
+                sigma:          (b, 1, C, P*P)
+                action_out:     (b, C, 1)
+                v:              (b, B, C, P*P)
             Local:
                 ln_p_j_h:  (b, B, C, P*P)
                 ln_ap:     (b, B, C, 1)
@@ -160,35 +146,33 @@ class ConvCaps(nn.Module):
                     - torch.log(sigma_sq.sqrt()) \
                     - 0.5*self.ln_2pi
 
-        ln_ap = ln_p_j_h.sum(dim=3) + torch.log(a_out.view(b, 1, C))
+        ln_ap = ln_p_j_h.sum(dim=3) + torch.log(action_out.view(b, 1, C))
         r = self.softmax(ln_ap)
         return r
 
-    def caps_em_routing(self, v, a_in, C, eps):
+    def caps_em_routing(self, v, action_in, C, eps):
         """
             Input:
-                v:         (b, B, C, P*P)
-                a_in:      (b, C, 1)
+                v:              (b, B, C, P*P)
+                action_in:      (b, C, 1)
             Output:
-                mu:        (b, 1, C, P*P)
-                a_out:     (b, C, 1)
-            Note that some dimensions are merged
-            for computation convenient, that is
+                mu:             (b, 1, C, P*P)
+                action_out:     (b, C, 1)
             `b == batch_size*oh*ow`,
             `B == self.K*self.K*self.B`,
             `psize == self.P*self.P`
         """
         b, B, c, psize = v.shape
         assert c == C
-        assert (b, B, 1) == a_in.shape
+        assert (b, B, 1) == action_in.shape
 
         r = torch.cuda.FloatTensor(b, B, C).fill_(1./C)
         for iter_ in range(self.iters):
-            a_out, mu, sigma_sq = self.m_step(a_in, r, v, eps, b, B, C, psize)
+            action_out, mu, sigma_sq = self.m_step(action_in, r, v, eps, b, B, C, psize)
             if iter_ < self.iters - 1:
-                r = self.e_step(mu, sigma_sq, a_out, v, eps, b, C)
+                r = self.e_step(mu, sigma_sq, action_out, v, eps, b, C)
 
-        return mu, a_out
+        return mu, action_out
 
     def add_pathes(self, x, B, K, psize, stride):
         """
@@ -199,7 +183,7 @@ class ConvCaps(nn.Module):
         b, h, w, c = x.shape
         assert h == w
         assert c == B*(psize+1)
-        oh = ow = int(((h - K )/stride)+ 1) # moein - changed from: oh = ow = int((h - K + 1) / stride)
+        oh = ow = int(((h - K )/stride)+ 1)
         idxs = [[(h_idx + k_idx) \
                 for k_idx in range(0, K)] \
                 for h_idx in range(0, h - K + 1, stride)]
@@ -208,7 +192,7 @@ class ConvCaps(nn.Module):
         x = x.permute(0, 1, 3, 2, 4, 5).contiguous()
         return x, oh, ow
 
-    def transform_view(self, x, w, C, P, w_shared=False):
+    def transform_view(self, x, w, C, P, weight_shared=False):
         """
             For conv_caps:
                 Input:     (b*H*W, K*K*B, P*P)
@@ -221,7 +205,7 @@ class ConvCaps(nn.Module):
         assert psize == P*P
 
         x = x.view(b, B, 1, P, P)
-        if w_shared:
+        if weight_shared:
             hw = int(B / w.size(1))
             w = w.repeat(1, hw, 1, 1, 1)
 
@@ -255,43 +239,41 @@ class ConvCaps(nn.Module):
             x, oh, ow = self.add_pathes(x, self.B, self.K, self.psize, self.stride)
 
             # transform view
-            p_in = x[:, :, :, :, :, :self.B*self.psize].contiguous()
-            a_in = x[:, :, :, :, :, self.B*self.psize:].contiguous()
-            p_in = p_in.view(b*oh*ow, self.K*self.K*self.B, self.psize)
-            a_in = a_in.view(b*oh*ow, self.K*self.K*self.B, 1)
-            v = self.transform_view(p_in, self.weights, self.C, self.P)
+            pose_in = x[:, :, :, :, :, :self.B*self.psize].contiguous()
+            action_in = x[:, :, :, :, :, self.B*self.psize:].contiguous()
+            pose_in = pose_in.view(b*oh*ow, self.K*self.K*self.B, self.psize)
+            action_in = action_in.view(b*oh*ow, self.K*self.K*self.B, 1)
+            v = self.transform_view(pose_in, self.weights, self.C, self.P)
 
             # em_routing
-            p_out, a_out = self.caps_em_routing(v, a_in, self.C, self.eps)
-            p_out = p_out.view(b, oh, ow, self.C*self.psize)
-            a_out = a_out.view(b, oh, ow, self.C)
-            out = torch.cat([p_out, a_out], dim=3)
+            pose_out, action_out = self.caps_em_routing(v, action_in, self.C, self.eps)
+            pose_out = pose_out.view(b, oh, ow, self.C*self.psize)
+            action_out = action_out.view(b, oh, ow, self.C)
+            out = torch.cat([pose_out, action_out], dim=3)
         else:
             assert c == self.B*(self.psize+1)
             assert 1 == self.K
             assert 1 == self.stride
-            p_in = x[:, :, :, :self.B*self.psize].contiguous()
-            p_in = p_in.view(b, h*w*self.B, self.psize)
-            a_in = x[:, :, :, self.B*self.psize:].contiguous()
-            a_in = a_in.view(b, h*w*self.B, 1)
+            pose_in = x[:, :, :, :self.B*self.psize].contiguous()
+            pose_in = pose_in.view(b, h*w*self.B, self.psize)
+            action_in = x[:, :, :, self.B*self.psize:].contiguous()
+            action_in = action_in.view(b, h*w*self.B, 1)
 
             # transform view
-            v = self.transform_view(p_in, self.weights, self.C, self.P, self.w_shared)
+            v = self.transform_view(pose_in, self.weights, self.C, self.P, self.w_shared)
 
             # coor_add
             if self.coor_add:
                 v = self.add_coord(v, b, h, w, self.B, self.C, self.psize)
 
             # em_routing
-            _, out = self.caps_em_routing(v, a_in, self.C, self.eps)
+            _, out = self.caps_em_routing(v, action_in, self.C, self.eps)
 
         return out
 
 
 class CapsNet(nn.Module):
-    """A network with one ReLU convolutional layer followed by
-    a primary convolutional capsule layer and two more convolutional capsule layers.
-    Suppose image shape is 28x28x1, the feature maps change as follows:
+    """
     1. ReLU Conv1
         (_, 1, 28, 28) -> 5x5 filters, 32 out channels, stride 2 with padding
         x -> (_, 32, 14, 14)
