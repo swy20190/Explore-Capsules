@@ -96,15 +96,16 @@ class FeatureExtractor(nn.Module):
         return self.squash(output, dim=-1)
 
 
-# No.3, routing layer
+# No.3 ,OptimCaps algo for routing layer
 class RoutingLayer(nn.Module):
     def __init__(self, gpu_id, num_input_capsules, num_output_capsules, data_in, data_out, num_iterations):
         super(RoutingLayer, self).__init__()
 
         self.gpu_id = gpu_id
         self.num_iterations = num_iterations
-        # nn.Parameter makes route_weights trainable
+        
         self.route_weights = nn.Parameter(torch.randn(num_output_capsules, num_input_capsules, data_out, data_in))
+
 
     def squash(self, tensor, dim):
         squared_norm = (tensor ** 2).sum(dim=dim, keepdim=True)
@@ -113,51 +114,59 @@ class RoutingLayer(nn.Module):
 
     def forward(self, x, random, dropout):
 
-        x = x.transpose(2, 1)  # x.T
+        x = x.transpose(2, 1) # x.T
 
-        # W <-- W + rand(size(W))
         if random:
             noise = Variable(0.01*torch.randn(*self.route_weights.size()))
             if self.gpu_id >= 0:
                 noise = noise.cuda(self.gpu_id)
             route_weights = self.route_weights + noise
         else:
-            route_weights = self.route_weights
-
-        # u <-- W*u
-        priors = route_weights[:, None, :, :, :] @ x[None, :, :, :, None]
-
+            route_weights = self.route_weights  
+        
+        # u <-- W*u       
+        priors = route_weights[:, None, :, :, :] @ x[None, :, :, :, None] 
+        priors = priors / (priors**2).sum()**0.5
+        
+        #Frobenius norm
+        priors = priors*priors.linalg.vector_norm(p ='fro', keepdim = True)
+        
+        
         priors = priors.transpose(1, 0)
 
-        # u <-- dropout(u)
         if dropout > 0.0:
             drop = Variable(torch.FloatTensor(*priors.size()).bernoulli(1.0- dropout))
             if self.gpu_id >= 0:
                 drop = drop.cuda(self.gpu_id)
             priors = priors * drop
-
-        # b_i, j <-- 0
+            
+       
         logits = Variable(torch.zeros(*priors.size()))
 
         if self.gpu_id >= 0:
             logits = logits.cuda(self.gpu_id)
 
         num_iterations = self.num_iterations
-
+        
+        h1 = 0.95 #hyperparameter
         for i in range(num_iterations):
-
-            # c_i <-- softmax(b_i)
-            probs = F.softmax(logits, dim=2)
-            # s_j <-- Sigma c_i u
-            # v <-- squash(s_j)
-            outputs = self.squash((probs * priors).sum(dim=2, keepdim=True), dim=3)
-
-            # b <-- b + u^Tv
+            probs = F.softmax(logits, dim=2) 
+            
+            s= (probs * priors).sum(dim=2, keepdim=True)
+            
+            v = s / (s**2).sum()**0.5
+            
+            
+            
             if i != self.num_iterations - 1:
-                delta_logits = priors * outputs
-                logits = logits + delta_logits
-
-        outputs = outputs.squeeze()
+                logits = priors * v
+                
+                logits = h1*logits
+                
+        
+        wj = (s**2).sum()**0.5 / (1 + (s**2).sum()**0.5)
+        
+        outputs = wj*s # output yj
 
         if len(outputs.shape) == 3:
             outputs = outputs.transpose(2, 1).contiguous() 
